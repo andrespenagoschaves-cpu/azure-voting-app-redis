@@ -1,0 +1,80 @@
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  acrServiceConnection: 'sc-acr-tf'
+  acrName: 'acrvotingapp7f7e43aa.azurecr.io'
+  tag: '$(Build.BuildId)'
+
+stages:
+- stage: Build
+  displayName: 'Construir y publicar imagen'
+  jobs:
+  - job: BuildVoteFront
+    displayName: 'Build azure-vote-front'
+    pool: { vmImage: 'ubuntu-latest' }
+    steps:
+    - task: Docker@2
+      inputs:
+        containerRegistry: '$(acrServiceConnection)'
+        repository: 'azure-vote-front'
+        command: 'buildAndPush'
+        Dockerfile: 'azure-vote/Dockerfile'
+        buildContext: 'azure-vote'
+        tags: |
+          $(tag)
+          latest
+
+- stage: DeployStaging
+  displayName: 'Desplegar en Staging'
+  dependsOn: Build
+  jobs:
+  - deployment: DeployToStaging
+    pool: { vmImage: 'ubuntu-latest' }
+    environment: 'staging'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: KubernetesManifest@1
+            displayName: 'Deploy to staging namespace'
+            inputs:
+              action: 'deploy'
+              connectionType: 'azureResourceManager'
+              azureSubscriptionConnection: 'sc-azure-arm-tf'
+              azureResourceGroup: 'rg-devops-lab-tf'
+              kubernetesCluster: 'aks-devops-lab-tf'
+              namespace: 'staging'
+              manifests: |
+                k8s/azure-vote-all-in-one.yaml
+              containers: |
+                $(acrName)/azure-vote-front:$(tag)
+
+- stage: DeployProduction
+  displayName: 'Desplegar en Production'
+  dependsOn: DeployStaging
+  jobs:
+  - deployment: DeployToProduction
+    pool: { vmImage: 'ubuntu-latest' }
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: KubernetesManifest@1
+            displayName: 'Deploy to production namespace'
+            inputs:
+              action: 'deploy'
+              connectionType: 'azureResourceManager'
+              azureSubscriptionConnection: 'sc-azure-arm-tf'
+              azureResourceGroup: 'rg-devops-lab-tf'
+              kubernetesCluster: 'aks-devops-lab-tf'
+              namespace: 'production'
+              manifests: |
+                k8s/azure-vote-all-in-one.yaml
+              containers: |
+                $(acrName)/azure-vote-front:$(tag)
